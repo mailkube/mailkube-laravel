@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  push:
+    # `develop` only, and `main` is absent on purpose. `develop` is the integration branch and is
+    # pushed to directly, so without this trigger a direct push would run nothing — `pull_request`
+    # alone does not cover it. `main` is covered instead by release.yml, which runs this whole
+    # workflow through `workflow_call` as its `ci-gate` job before releasing. Adding `main` here
+    # would put that gate run and a standalone push run in the same `ci-${{ github.ref }}`
+    # concurrency group, where one is cancelled — and the cancelled one is what the README's CI
+    # badge reports.
+    branches: [develop]
+  pull_request:
+  workflow_call: # so release.yml can gate on the full CI
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Two axes, and they are genuinely independent. The PHP axis is this package's own floor and
+    # ceiling; the Laravel axis is the host framework, which can break an integration through a
+    # major it does not depend on directly. See .rules/INTEGRATION_CONTRACT.md.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.3", "8.4"]
+        # Every major the `illuminate/*` constraints in composer.json claim, and no more. Keep the
+        # two in step: composer.json is generated from the template's `laravel_versions_ci` while
+        # this matrix is not (workflows are copied without rendering), so widening one and not the
+        # other publishes a support claim nothing tests.
+        #
+        # Laravel 11 is deliberately absent. It is past security support, and advisory
+        # PKSA-mdq4-51ck-6kdq covers `>=11.0.0,<12.0.0` with no patched 11.x, so Composer's default
+        # audit policy refuses to install ANY of it — a leg here could never go green, and the
+        # constraint that fed it would be a promise no consumer can resolve.
+        #
+        # Laravel 13 needs PHP ^8.3, so neither PHP leg has to be excluded.
+        laravel: ["12", "13"]
+    name: test (PHP ${{ matrix.php }}, Laravel ${{ matrix.laravel }})
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: pcov
+          tools: composer:v2
+
+      - name: Manifest validation (composer validate)
+        # Deliberately NOT --no-check-publish, which suppresses exactly the checks that decide
+        # whether Packagist will accept this package at all.
+        run: composer validate --strict
+
+      - name: Install dependencies pinned to Laravel ${{ matrix.laravel }}
+        # `laravel/framework` replaces the `illuminate/*` packages this package requires, and
+        # Testbench resolves to whichever major matches it, so pinning the framework pins the whole
+        # axis without naming five constraints.
+        run: composer update --with="laravel/framework:^${{ matrix.laravel }}.0" --no-interaction --no-progress --prefer-dist
+
+      - name: Formatting (php-cs-fixer)
+        run: vendor/bin/php-cs-fixer fix --dry-run --diff
+
+      - name: Docblocks + type hints (phpcs)
+        run: vendor/bin/phpcs
+
+      - name: Static analysis (phpstan, level max + larastan)
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+
+      - name: Complexity + design (phpmd)
+        run: vendor/bin/phpmd src text phpmd.xml
+
+      - name: Tests (phpunit)
+        run: vendor/bin/phpunit --coverage-clover=coverage.clover
+
+      - name: Coverage gate (90% line)
+        run: ./scripts/check-coverage.sh coverage.clover
+
+  package:
+    # Publish-readiness. Packagist builds no artifact: what a consumer receives is `git archive` of
+    # the tag, filtered by .gitattributes `export-ignore`. So this asserts the OUTCOME of that file
+    # rather than its existence — a partial ignore list reads as "source only" while it is not.
+    # release.yml only tags AFTER this has passed, which is the point. See .rules/CI_GATES.md.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          coverage: none
+          tools: composer:v2
+
+      - name: Manifest validation (composer validate)
+        run: composer validate --strict
+
+      - name: Assert the published archive ships runtime files only
+        run: |
+          git archive --format=tar HEAD | tar -t > archive.txt
+          cat archive.txt
+          if grep -Eq '^(tests|scripts|\.github|\.rules)/' archive.txt; then
+            echo "::error::the published archive ships development apparatus — check .gitattributes"
+            exit 1
+          fi
+          # The inverse matters just as much: an over-eager export-ignore that dropped the config
+          # would publish a package whose service provider cannot boot.
+          for required in composer.json src/ config/; do
+            grep -q "^${required}" archive.txt || { echo "::error::the archive is missing ${required}"; exit 1; }
+          done
+
+  deps-floor:
+    # The declared lower bounds are fiction until something resolves down to them: every `test` leg
+    # installs the NEWEST matching versions, so a floor that no longer works breaks exactly one
+    # person, the consumer whose resolver picks it. See .rules/CI_GATES.md.
+    #
+    # This package HAS runtime dependencies (the SDK, illuminate/*, symfony/mailer), so unlike a
+    # zero-dependency SDK it does not get to skip this job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The floor is READ from composer.json, which is the one place it is declared. Writing it here
+      # too would make this job assert a floor the package does not actually claim, and the copy
+      # that goes stale is the one nothing reads.
+      - name: Read the declared PHP floor
+        id: floor
+        run: |
+          version="$(jq -r '.require.php' composer.json | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+          test -n "$version" || { echo "::error::no PHP floor in composer.json"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ steps.floor.outputs.version }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Install the lowest allowed dependencies
+        run: composer update --prefer-lowest --prefer-stable --no-interaction --no-progress
+
+      - name: Tests against the dependency floor
+        # No coverage gate here: this job answers "do the floors install and behave". Coverage is
+        # the `test` job's gate.
+        run: vendor/bin/phpunit
+
+  # There is deliberately no example-compilation job. This package ships no `examples/`: every entry
+  # point it exposes needs a host application before it can run, so runnable scripts would need one
+  # scaffolded first and would rot the moment it drifted. The wiring lives in README.md instead, and
+  # the tests are what keep it honest. See .rules/INTEGRATION_CONTRACT.md and .rules/CI_GATES.md.
+
+  dry:
+    # Language-agnostic duplication (DRY) gate — identical across every mailkube repo.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+      - name: Copy-paste detection (jscpd)
+        run: npx --yes jscpd@4 --config .jscpd.json .
+
+  docs:
+    # Governance gate: every .rules/*.md must be indexed in AGENTS.md.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rule-index sync check
+        run: ./scripts/check-rule-index.sh

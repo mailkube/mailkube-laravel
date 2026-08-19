@@ -1,0 +1,38 @@
+# Keep the published Composer dist tarball to what a consumer actually runs.
+#
+# Everything below is development apparatus: it belongs in the repository and in CI, never in
+# `vendor/mailkube/mailkube-laravel` on a consumer's disk. What survives is
+# `src/`, `config/`, `composer.json`, `README.md`, `LICENSE` and `NOTICE` — plus
+# `CODE_OF_CONDUCT.md` and `SECURITY.md`, which are deliberately kept so the security contact
+# travels with the package.
+#
+# `config/` stays, and that is not an oversight: the service provider merges and publishes it at
+# runtime, so a dist without it is a package that cannot boot.
+#
+# This file is a claim about the published artifact, and the `package` CI job is what proves it:
+# it lists `git archive` and fails if any of these reappear. Verify locally the same way, with
+# `composer archive --format=tar && tar tf *.tar`.
+
+/tests                     export-ignore
+/scripts                   export-ignore
+/.github                   export-ignore
+/.rules                    export-ignore
+
+/phpstan.neon              export-ignore
+/phpcs.xml                 export-ignore
+/phpmd.xml                 export-ignore
+/phpunit.xml.dist          export-ignore
+/.php-cs-fixer.dist.php    export-ignore
+/.jscpd.json               export-ignore
+/.pre-commit-config.yaml   export-ignore
+/.releaserc.json           export-ignore
+/commitlint.config.js      export-ignore
+/.editorconfig             export-ignore
+/.gitignore                export-ignore
+/.gitattributes            export-ignore
+/Dockerfile                export-ignore
+/compose.yaml              export-ignore
+/.dockerignore             export-ignore
+
+/AGENTS.md                 export-ignore
+/CONTRIBUTING.md           export-ignore

@@ -1,0 +1,26 @@
+# Strict-typing + SOLID static analysis gate. Level max is the strictest ruleset.
+#
+# Larastan is not optional here. Laravel's facades, `config()` and container helpers are dynamic by
+# design, and PHPStan cannot see through them unaided: without the extension every facade call is an
+# unknown static method and the run drowns in false positives, which is how a gate ends up disabled.
+includes:
+    - vendor/larastan/larastan/extension.neon
+    - vendor/phpstan/phpstan-strict-rules/rules.neon
+    - vendor/phpstan/phpstan-phpunit/extension.neon
+    - vendor/phpstan/phpstan-phpunit/rules.neon
+
+parameters:
+    level: max
+    paths:
+        - src
+        - tests
+
+    ignoreErrors:
+        # Larastan models a facade's root methods as static, so calling one on the instance that
+        # `Mail::mailer('name')` returns is reported as a dynamic call to a static method. The call
+        # is ordinary Laravel; the model is what is approximate. Scoped to tests, which are the only
+        # place that reaches for a named mailer, and by identifier so nothing else is suppressed.
+        # This is the scoped, commented waiver .rules/SOLID_DRY_KISS.md asks for.
+        -
+            identifier: staticMethod.dynamicCall
+            path: tests/*

@@ -1,0 +1,57 @@
+# Run `pre-commit install && pre-commit install --hook-type commit-msg` after `composer install`.
+# The PHP hooks call the tools installed in vendor/bin; Node is needed for jscpd.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+
+  - repo: local
+    hooks:
+      - id: php-cs-fixer
+        name: php-cs-fixer (format)
+        entry: vendor/bin/php-cs-fixer fix
+        language: system
+        types: [php]
+        pass_filenames: false
+      - id: phpcs
+        name: phpcs (docs / type hints)
+        entry: vendor/bin/phpcs
+        language: system
+        types: [php]
+        pass_filenames: false
+      - id: phpstan
+        name: phpstan (strict analysis)
+        entry: vendor/bin/phpstan analyse --no-progress
+        language: system
+        types: [php]
+        pass_filenames: false
+      - id: phpmd
+        name: phpmd (complexity / design)
+        entry: vendor/bin/phpmd src text phpmd.xml
+        language: system
+        types: [php]
+        pass_filenames: false
+
+  # Language-agnostic DRY gate — identical config in every mailkube repo.
+  - repo: local
+    hooks:
+      - id: jscpd
+        name: jscpd (copy-paste detector)
+        entry: npx --yes jscpd@4 --config .jscpd.json .
+        language: system
+        pass_filenames: false
+
+  # Enforce Conventional Commits on the commit message (matches the org house style).
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.22.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        additional_dependencies:
+          - "@commitlint/config-conventional"

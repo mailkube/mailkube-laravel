@@ -1,0 +1,57 @@
+name: Release
+
+# Conventional-Commits-driven release: one tag + one GitHub Release, and NOTHING committed
+# back to `main`.
+# There is no publish job — Packagist ingests new `vX.Y.Z` tags via its GitHub service hook.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci-gate:
+    # Release only proceeds if the full gated CI (test + package + deps-floor + dry + docs) is
+    # green. `package` in particular: Packagist ingests the tag, so a bad .gitattributes cannot
+    # be fixed after the fact without burning a version.
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci-gate
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      # A job-level `permissions:` block REPLACES the default token scopes rather than adding
+      # to them, so every scope semantic-release needs must be listed here.
+      # `@semantic-release/github` comments on the issues and PRs a release resolves and labels
+      # them `released`; without `issues`/`pull-requests` that call 403s and turns the run red
+      # AFTER the tag and the GitHub Release have already been created. See .rules/CI_GATES.md.
+      contents: write # push the tag, create the GitHub Release
+      issues: write # release comment on resolved issues
+      pull-requests: write # release comment + `released` label on resolved PRs
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      # Creates the TAG and the GitHub Release, and nothing else. No `@semantic-release/git`
+      # and no `@semantic-release/changelog` on purpose: a bot commit to `main` would be
+      # rejected by the branch ruleset, and github-actions[bot] cannot be added to a ruleset
+      # bypass list. The release notes are the changelog. See .rules/RELEASE.md.
+      # The semantic-release major is pinned on purpose: this repo can sit untouched for
+      # months and an unpinned `npx` resolves @latest at run time. Dependabot cannot see
+      # this dependency — there is no manifest — so bumping it is a manual task.
+      - name: Release (semantic-release — tag + GitHub Release, no commit, no registry publish)
+        run: >-
+          npx --yes
+          -p semantic-release@24
+          semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
