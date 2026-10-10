@@ -6,12 +6,14 @@
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Code of Conduct](https://img.shields.io/badge/Contributor%20Covenant-2.1-purple.svg)](CODE_OF_CONDUCT.md)
 
-Laravel mail transport for mailkube.
+Laravel mail transport for [mailkube](https://mailkube.com).
 
 Send mail through mailkube using Laravel's own `Mail` facade, and receive webhooks as Laravel
 events. This package is a thin adapter over
 [`mailkube/mailkube-php`](https://github.com/mailkube/mailkube-php): the API, retries, errors and
 signature verification all live there.
+
+Full product and API documentation: [docs.mailkube.com/sdks/laravel](https://docs.mailkube.com/sdks/laravel).
 
 ## Requirements
 
